@@ -1,10 +1,6 @@
 import folium
-import json
 from folium.plugins import HeatMap, HeatMapWithTime, Draw, MarkerCluster
 from flask import Flask, render_template
-import numpy as np
-import branca
-import branca.colormap as cm
 from turfpy.transformation import intersect, circle
 import psycopg2
 from turfpy import measurement
@@ -14,10 +10,9 @@ from geojson import Point, Feature
 app = Flask(__name__)
 
 @app.route('/')
-def index():
-    # Dataframe containing the data to plot    
+def index():  
 
-    conn = psycopg2.connect("dbname=")
+    conn = psycopg2.connect("dbname")
 
     cursor = conn.cursor()
 
@@ -37,7 +32,7 @@ def index():
 
     return m._repr_html_()
 
-def color(count):
+def colors(count):
     if 76<=count<=1000:
         return "#00ff1a"
     if 55<=count<=76:
@@ -69,7 +64,7 @@ def manyCircle(map, records, cursor):
         if record[2]:
             if record[3]:
                 if record[4]:
-                    folium.Circle(location=[record[2], record[3]], stroke=False, fill_opacity=0.2, radius=record[4] ,fill=True,fill_color=color(nubmers)).add_to(map)
+                    folium.Circle(location=[record[2], record[3]], stroke=False, fill_opacity=0.2, radius=record[4] ,fill=True,fill_color=colors(nubmers)).add_to(map)
 
 
 def intersected(map, records, cursor):
@@ -98,7 +93,7 @@ def intersected(map, records, cursor):
                     countsTwo = cursor.fetchall()
                     for countTwo in countsTwo:
                         nubmerTwo = countTwo[0]
-                    style_function = lambda x: {'fillColor': color(nubmerOne + nubmerTwo), 'stroke': False}
+                    style_function = lambda x: {'fillColor': colors(nubmerOne + nubmerTwo), 'stroke': False}
                     folium.GeoJson(data=intersect([circleOne, circleTwo]), style_function=style_function).add_to(map)
 
 
@@ -133,7 +128,7 @@ def information(map, records, cursor):
         <p>2. {gym}</p>
         <p>3. {types}</p>
         <p>4. {views}</p>
-        <p>4. {inform[6]}</p>
+        <p>5. {inform[6]}</p>
         """
         iframe = folium.IFrame(html=html, width=300, height=300)
         popup = folium.Popup(iframe, max_width=2650)
