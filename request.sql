@@ -1,46 +1,3 @@
-----------------------------------------------------------------Получение сетки
-DROP FUNCTION IF EXISTS get_grid;
-CREATE FUNCTION get_grid(grid_cell_size FLOAT, SRID INTEGER)
-RETURNS GEOMETRY AS 
-$$ 
-DECLARE
-	city_polygon GEOMETRY:=get_city_polygon(SRID);
-	x_lim FLOAT[]:=ARRAY[ST_XMin(city_polygon), ST_XMax(city_polygon)];
-	y_lim FLOAT[]:=ARRAY[ST_YMin(city_polygon), ST_YMax(city_polygon)];
-	j FLOAT;
-	i FLOAT;
-	grid_cell GEOMETRY;
-	grid TEXT:='';
-	ulut_params TEXT:='';
-BEGIN
-	PERFORM update_parameters(grid_cell_size, x_lim[1], x_lim[2], y_lim[1], y_lim[2]);
-	j:=y_lim[1];
-	WHILE j<y_lim[2]
-	LOOP
-		i:=x_lim[1];
-		WHILE i<x_lim[2]
-		LOOP
-			grid_cell:=get_square_grid_cell(i, j, SRID);
-			IF ST_Intersects(city_polygon, grid_cell) THEN
-				ulut_params:=add_comma_seporator(ulut_params)||'('
-								 ||i||','
-								 ||j||','
-								 ||DIV((i-x_lim[1])::numeric, grid_cell_size::numeric)||','
-								 ||DIV((j-y_lim[1])::numeric, grid_cell_size::numeric)
-								 ||')';
-				grid:=add_comma_seporator(grid)||ST_AsText(grid_cell);
-			END IF;
-			i:=i+grid_cell_size;
-		END LOOP;
-		j:=j+grid_cell_size;
-	END LOOP;
-	grid:=ST_SetSRID(('MULTIPOLYGON('||REPLACE(grid, 'POLYGON', '')||')')::geometry, SRID);
-	PERFORM fill_ulut_table(ulut_params);
-	RETURN grid;
-END;  
-$$ 
-LANGUAGE 'plpgsql';
-SELECT get_grid(0.0025, 4326);
 --=================================================================
 ----------------------------------------------------------------Создание схемы УлУТ
 DROP SCHEMA IF EXISTS ulut CASCADE;
@@ -55,7 +12,7 @@ CREATE TABLE ulut.parameters(
 	y_min FLOAT NOT NULL,
 	y_max FLOAT NOT NULL
 );
-INSERT INTO ulut.parameters VALUES (555, 555, 555, 555, 555, 555);
+INSERT INTO ulut.parameters VALUES (0, 0, 0, 0, 0, 0);
 ----------------------------------------------------------------Создание таблицы ulut
 DROP TABLE IF EXISTS ulut.ulut;
 CREATE TABLE ulut.ulut(
@@ -65,7 +22,7 @@ CREATE TABLE ulut.ulut(
 	x_ind INTEGER,
 	y_ind INTEGER,
 	not_blank BOOLEAN,
-	a_square GEOMETRY,
+	a_square GEOMETRY
 );
 ----------------------------------------------------------------Обновление параметров
 DROP FUNCTION IF EXISTS update_parameters;
@@ -84,26 +41,7 @@ BEGIN
 END;  
 $$ 
 LANGUAGE 'plpgsql';
-SELECT update_parameters(111, 111, 111, 111, 111, 111);
-----------------------------------------------------------------Создание и наполнение таблицы УлУТ
-/*DROP FUNCTION IF EXISTS fill_ulut_table;
-CREATE FUNCTION fill_ulut_table(the_values TEXT)
-RETURNS VOID AS 
-$$ 	
-BEGIN
-	DROP TABLE IF EXISTS ulut.ulut;
-	CREATE TABLE ulut.ulut(
-		id SERIAL NOT NULL PRIMARY KEY,
-		x_crd FLOAT,
-		y_crd FLOAT,
-		x_ind INTEGER,
-		y_ind INTEGER
-	);
-	EXECUTE format('INSERT INTO ulut.ulut(x_crd, y_crd, x_ind, y_ind) VALUES '||the_values);
-END;  
-$$ 
-LANGUAGE 'plpgsql';*/
---SELECT fill_ulut_table('(0, 0, 0, 0)')
+--SELECT update_parameters(111, 111, 111, 111, 111, 111);
 ----------------------------------------------------------------Наполнение таблицы ulut
 DROP FUNCTION IF EXISTS fill_ulut_table;
 CREATE FUNCTION fill_ulut_table(x_crd FLOAT, y_crd FLOAT, x_ind INTEGER, y_ind INTEGER, a_square GEOMETRY)
@@ -115,10 +53,9 @@ BEGIN
 END;  
 $$ 
 LANGUAGE 'plpgsql';
---
-----------------------------------------------------------------Получение количество частей полигона города
+----------------------------------------------------------------Получение количества частей полигона города
 DROP FUNCTION IF EXISTS get_city_polygon_part_count;
-CREATE FUNCTION get_city_polygon_part_count(SRID INTEGER)
+CREATE FUNCTION get_city_polygon_part_count()
 RETURNS INTEGER AS
 $$
 BEGIN
@@ -129,14 +66,14 @@ BEGIN
 END;  
 $$ 
 LANGUAGE 'plpgsql';
---SELECT get_city_polygon_part_count(4326);
+--SELECT get_city_polygon_part_count();
 ----------------------------------------------------------------Получение частей полигона города по индексам
 DROP FUNCTION IF EXISTS get_city_polygon_part;
 CREATE FUNCTION get_city_polygon_part(part_index INTEGER, SRID INTEGER)
 RETURNS GEOMETRY AS
 $$
 DECLARE
-    part_count INTEGER:=get_city_polygon_part_count(SRID);
+    part_count INTEGER:=get_city_polygon_part_count();
 BEGIN
     RETURN
     ((SELECT ST_Transform(way, SRID)
@@ -153,7 +90,7 @@ BEGIN
 END;  
 $$ 
 LANGUAGE 'plpgsql';
---SELECT get_city_polygon_part(0, 4326);
+--SELECT get_city_polygon_part(0, 3857);
 ----------------------------------------------------------------Добавление запятой, если это нужно, перед добавлением записи
 DROP FUNCTION IF EXISTS add_comma_seporator;
 CREATE FUNCTION add_comma_seporator(txt TEXT)
@@ -174,7 +111,7 @@ CREATE FUNCTION get_city_polygon(SRID INTEGER)
 RETURNS GEOMETRY AS 
 $$
 DECLARE
-    part_count INTEGER:=get_city_polygon_part_count(SRID);
+    part_count INTEGER:=get_city_polygon_part_count();
 	i INTEGER:=0;
 	a_multi_polygon TEXT:='';
 	city_multi_polygon GEOMETRY;
@@ -191,7 +128,7 @@ BEGIN
 END;  
 $$ 
 LANGUAGE 'plpgsql';
---SELECT get_city_polygon(4326);
+--SELECT get_city_polygon(3857);
 ----------------------------------------------------------------Получение квадратного полигона, служащего в качестве ячейки для сетки
 DROP FUNCTION IF EXISTS get_square_grid_cell;
 CREATE FUNCTION get_square_grid_cell(x FLOAT, y FLOAT, SRID INTEGER)
@@ -214,21 +151,20 @@ BEGIN
 END;  
 $$ 
 LANGUAGE 'plpgsql';
---SELECT get_square_grid_cell(0, 0, 4326);
+--SELECT get_square_grid_cell(0, 0, 3857);
 ----------------------------------------------------------------Получение сетки
 DROP FUNCTION IF EXISTS get_grid;
 CREATE FUNCTION get_grid(grid_cell_size FLOAT, SRID INTEGER)
-RETURNS GEOMETRY AS 
+RETURNS VOID AS 
 $$ 
 DECLARE
-    city_polygon_part_count INTEGER:=get_city_polygon_part_count(SRID);
+    city_polygon_part_count INTEGER:=get_city_polygon_part_count();
     city_polygon GEOMETRY:=get_city_polygon(SRID);
 	x_lim FLOAT[]:=ARRAY[ST_XMin(city_polygon), ST_XMax(city_polygon)];
 	y_lim FLOAT[]:=ARRAY[ST_YMin(city_polygon), ST_YMax(city_polygon)];
 	j FLOAT;
 	i FLOAT;
 	grid_cell GEOMETRY;
-	grid TEXT:='';
 	ulut_params TEXT:='';
 BEGIN
 	PERFORM update_parameters(city_polygon_part_count, grid_cell_size, x_lim[1], x_lim[2], y_lim[1], y_lim[2]);
@@ -248,14 +184,11 @@ BEGIN
 						DIV((j-y_lim[1])::numeric, grid_cell_size::numeric)::INTEGER,
 						grid_cell
 					);
-				grid:=add_comma_seporator(grid)||ST_AsText(grid_cell);
 			END IF;
 			i:=i+grid_cell_size;
 		END LOOP;
 		j:=j+grid_cell_size;
 	END LOOP;
-	grid:=ST_SetSRID(('MULTIPOLYGON('||REPLACE(grid, 'POLYGON', '')||')')::geometry, SRID);
-	RETURN grid;
 END;  
 $$ 
 LANGUAGE 'plpgsql';
@@ -279,24 +212,6 @@ CREATE TABLE ulut.sports_facilities(
 	a_point GEOMETRY,
 	a_circle GEOMETRY
 );
-----------------------------------------------------------------Импорт
-COPY ulut.sports_facilities
-	(
-		sport_facility_id,
-		sport_facility_name,
-		departmental_organization_id,
-		departmental_organization_name,
-		sports_zone_id,
-		sports_zone_name,
-		sports_zone_type,
-		sports_zone_availability_value,
-		sports_zone_availability_name,
-		kind_of_sport,
-		latitude,
-		longitude
-	)
-FROM 'D:\University\4_course\CI\data.csv'
-WITH (format csv, delimiter E'\t', NULL 'null');
 ----------------------------------------------------------------Изменнение значений под SRID 3857
 DROP FUNCTION IF EXISTS update_data;
 CREATE FUNCTION update_data(the_id INTEGER, zone_availability_value INTEGER, longit FLOAT, latit FLOAT)
@@ -320,28 +235,8 @@ BEGIN
 END;  
 $$ 
 LANGUAGE 'plpgsql';
-
 SELECT update_data(id, sports_zone_availability_value, longitude, latitude)
 FROM ulut.sports_facilities;
-----------------------------------------------------------------Обновление значений пустоты для ulut blank (пересечение ячейки и спортзон (есть хоть одно/нет))
-DROP FUNCTION IF EXISTS update_ulut_blank;
-CREATE FUNCTION update_ulut_blank()
-RETURNS VOID AS 
-$$
-DECLARE
-	a_size FLOAT:=(SELECT grid_cell_size FROM ulut.parameters);
-BEGIN
-	UPDATE ulut.ulut 
-	SET 
-		not_blank=true
-	FROM
-		ulut.sports_facilities 
-	WHERE NOT not_blank AND  NOT ST_IsEmpty(ST_Intersection(a_square, a_circle));
-END;  
-$$ 
-LANGUAGE 'plpgsql';
-
-SELECT update_ulut_blank();
 ----------------------------------------------------------------Количество спортивных зон в клетке, с возможностью разделения по типам
 DROP FUNCTION IF EXISTS get_sports_zones_count_in_a_cell;
 CREATE FUNCTION get_sports_zones_count_in_a_cell(x_cell FLOAT, y_cell FLOAT, zone_type TEXT, SRID INTEGER)
@@ -373,12 +268,9 @@ BEGIN
 END;  
 $$ 
 LANGUAGE 'plpgsql';
-
 /*SELECT get_sports_zones_count_in_a_cell(x_crd, y_crd, 'стрелковый тир крытый', 3857) AS cnt
 FROM ulut.ulut
-WHERE id=112827
---ORDER BY y_crd, x_crd
---LIMIT 100*/
+LIMIT 100*/
 ----------------------------------------------------------------Площадь спортивных зон в клетке
 DROP FUNCTION IF EXISTS get_sports_zones_area_in_a_cell;
 CREATE FUNCTION get_sports_zones_area_in_a_cell(x_cell FLOAT, y_cell FLOAT, SRID INTEGER)
@@ -416,13 +308,10 @@ BEGIN
 END;  
 $$ 
 LANGUAGE 'plpgsql';
-
 /*
 SELECT get_sports_zones_area_in_a_cell(x_crd, y_crd, 3857) AS cnt
 FROM ulut.ulut
-WHERE id=112827
---ORDER BY y_crd, x_crd
---LIMIT 100;
+LIMIT 100;
 */
 ----------------------------------------------------------------Количество видов спортивных услуг в клетке
 DROP FUNCTION IF EXISTS get_kind_of_sports_count_in_a_cell;
@@ -453,90 +342,22 @@ BEGIN
 END;  
 $$ 
 LANGUAGE 'plpgsql';
-
 /*SELECT get_kind_of_sports_count_in_a_cell(x_crd, y_crd, 3857) AS cnt
 FROM ulut.ulut
-WHERE id=112827
---ORDER BY y_crd, x_crd
---LIMIT 100*/
-----------------------------------------------------------------
-DROP FUNCTION IF EXISTS get_square_grid_cell_by_ind;
-CREATE FUNCTION get_square_grid_cell_by_ind(x_index INTEGER, y_index INTEGER, SRID INTEGER)
+LIMIT 100*/
+----------------------------------------------------------------Получение ячейки по id
+DROP FUNCTION IF EXISTS get_square_grid_cell_by_id;
+CREATE FUNCTION get_square_grid_cell_by_id(an_id INTEGER)
 RETURNS GEOMETRY AS 
 $$
-DECLARE
-	a_size FLOAT:=(SELECT grid_cell_size FROM ulut.parameters);
-	x FLOAT:=(SELECT x_crd FROM ulut.ulut WHERE x_ind=x_index AND y_ind=y_index);
-	y FLOAT:=(SELECT y_crd FROM ulut.ulut WHERE x_ind=x_index AND y_ind=y_index);
 BEGIN	
-	RETURN ST_MakePolygon(
-				ST_MakeLine(
-					ARRAY[
-						ST_SetSRID(ST_Point(x, y), SRID), 
-						ST_SetSRID(ST_Point(x+a_size, y), SRID), 
-						ST_SetSRID(ST_Point(x+a_size, y+a_size), SRID),
-						ST_SetSRID(ST_Point(x, y+a_size), SRID),
-						ST_SetSRID(ST_Point(x, y), SRID)
-					]::geometry[]
-				)
-			);
+	RETURN 
+	(SELECT a_square
+	 FROM ulut.ulut
+	 WHERE id=an_id);	
 END;  
 $$ 
-LANGUAGE 'plpgsql';
-/*SELECT get_square_grid_cell_by_ind(x_ind, y_ind, 3857)
+LANGUAGE 'plpgsql';	 
+/*SELECT get_square_grid_cell_by_id(id)
 FROM ulut.ulut
-LIMIT 100;*/
-----------------------------------------------------------------
-
-
-/*
-DROP FUNCTION IF EXISTS get_kind_of_sports_count_in_a_cell;
-CREATE FUNCTION get_kind_of_sports_count_in_a_cell(x_cell FLOAT, y_cell FLOAT, SRID INTEGER)
-RETURNS INTEGER AS 
-$$
-DECLARE
-	a_size FLOAT:=(SELECT grid_cell_size FROM ulut.parameters);
-BEGIN
-	RETURN 	(SELECT 
-			 	COUNT(an_intersection)			
-			FROM
-				(SELECT DISTINCT
-					ST_Intersection(
-						get_square_grid_cell(x_cell, y_cell, SRID),
-						a_circle
-					) AS an_intersection
-				FROM ulut.sports_facilities
-				WHERE
-				 	sports_zone_type=zone_type
-				 	AND
-					ST_Distance(
-						ST_SetSRID(ST_MakePoint(x_cell, y_cell), SRID),
-						a_circle
-					) < 5000 + 2*a_size
-				) AS q1
-			WHERE NOT ST_IsEmpty(an_intersection)
-			);
-END;  
-$$ 
-LANGUAGE 'plpgsql';*/
-/*
-SELECT get_kind_of_sports_count_in_a_cell(x_crd, y_crd, 3857) AS cnt
-FROM ulut.ulut
-WHERE id=112827
---ORDER BY y_crd, x_crd
---LIMIT 100
-*/
---=======================================================
-	SELECT 
-	 	ST_Intersection(
-			get_square_grid_cell(4177652.4851973155, 7519008.321340727, 3857),
-			a_circle
-		), ulut.sports_facilities.id
-	FROM ulut.sports_facilities
-	WHERE sports_zone_type='стрелковый тир крытый'
-	AND NOT ST_IsEmpty(
-		ST_Intersection(
-			get_square_grid_cell(4177652.4851973155, 7519008.321340727, 3857),
-			a_circle
-		)
-	)
+LIMIT 100*/
